@@ -20,6 +20,8 @@
 // the growth term and once more, steeply, by the drop term, so a sharp 7-day fall costs far more
 // than a slow drift. No protocol name is ever special-cased: the same function scores every row,
 // and the farm plan is derived from the protocol's own record (category, chains, TVL, age).
+// Every row also carries a `reason`: the rank in plain words, from the same figures, so the
+// dashboard's detail view can say why the protocol sits where it does.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -117,6 +119,7 @@ export interface BoardRow {
     age_days: number | null;
   };
   farm_steps: string[];
+  reason: string;
 }
 
 /** The dashboard's compact view of one row, with the farm plan carried along. */
@@ -138,6 +141,7 @@ export interface RadarRow {
   drop_multiplier: number;
   watchlist: boolean;
   farm_steps: string[];
+  reason: string;
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -213,6 +217,32 @@ export function impliedValue(
   return { implied, growthPct, growthMult, maturityMult, chainMult, dropMult, age };
 }
 
+/** A short dollar figure: $1.2B, $45.0M, $800K, $123. */
+function shortUsd(n: number): string {
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `$${Math.round(n / 1e3)}K`;
+  return `$${Math.round(n)}`;
+}
+
+/** The row's rank in plain words: what lifts it and what holds it back, from its own figures. */
+export function reasonFor(
+  p: SnapshotProtocol,
+  v: { implied: number; growthPct: number; growthMult: number; maturityMult: number; chainMult: number; dropMult: number; age: number | null },
+): string {
+  const base = Math.max(1, Math.round(p.tvl_usd * MODEL.base_multiple));
+  const bits: string[] = [`TVL ${shortUsd(p.tvl_usd)} at 0.25x gives a ${shortUsd(base)} base`];
+  if (v.growthPct > 0) bits.push(`seven-day growth of +${v.growthPct.toFixed(2)}% lifts it ${v.growthMult.toFixed(2)}x`);
+  else if (v.growthPct < 0) bits.push(`seven-day change of ${v.growthPct.toFixed(2)}% cuts it to ${v.growthMult.toFixed(2)}x`);
+  else bits.push('a flat seven days leave the growth term at 1.00x');
+  if (v.age === null) bits.push(`an unlisted age counts as ${MODEL.unknown_age_days} days`);
+  else if (v.age >= MODEL.maturity_days) bits.push('more than three years with no token gives the full maturity term');
+  else bits.push(`${v.age} days with no token give a ${v.maturityMult.toFixed(2)}x maturity term`);
+  if (p.chains.length > 1) bits.push(`${p.chains.length} chains add a ${v.chainMult.toFixed(2)}x breadth term`);
+  if (v.dropMult < 1) bits.push(`a sharp seven-day fall applies an extra ${v.dropMult.toFixed(2)}x penalty`);
+  return `${bits.join('; ')}; implied value ${shortUsd(v.implied)}.`;
+}
+
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
 const VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
 
@@ -279,6 +309,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       age_days: s.age,
     },
     farm_steps: farmSteps(s.p, s.age).map(stepText),
+    reason: reasonFor(s.p, s),
   }));
 }
 
@@ -463,6 +494,7 @@ export function radarRow(row: BoardRow, watchlist: Set<string>): RadarRow {
     drop_multiplier: row.model.drop_multiplier,
     watchlist: watchlist.has(row.slug),
     farm_steps: row.farm_steps,
+    reason: row.reason,
   };
 }
 
